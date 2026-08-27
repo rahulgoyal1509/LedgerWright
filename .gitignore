@@ -1,11 +1,20 @@
 .env
+<<<<<<< HEAD
 .env.*
 !.env.example
 
 node_modules/
 .next/
+=======
+>>>>>>> 813c0496629fc42343e75f0a29b72cf655c31a64
 __pycache__/
 *.pyc
 .venv/
 venv/
+<<<<<<< HEAD
 *.xlsx
+=======
+*.xlsx
+node_modules/
+.next/
+>>>>>>> 813c0496629fc42343e75f0a29b72cf655c31a64
