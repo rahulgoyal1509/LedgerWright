@@ -104,19 +104,12 @@ def _gemini_triage(items: list[Transaction]) -> list[MatchResult]:
         for i, t in enumerate(items)
     ]
 
-    prompt = f"""You are an accounting reconciliation assistant. Each item below is a transaction
-from either a bank statement or an internal ledger that had NO matching entry on the other side
-after exact/timing-lag/rounding checks already ran.
-
-For each item, decide the most likely category:
-- "duplicate_entry": likely a duplicate record
-- "missing_entry": a real transaction (e.g. a bank fee) that was simply never logged on the other side
-- "genuine_error": looks like a real discrepancy needing human judgement (data entry error, fraud risk, or a transaction with no counterpart at all)
-- "unknown": not enough information to tell
-
-Items:
-{json.dumps(payload, indent=2)}
-"""
+    prompt = (
+        "Classify each unmatched accounting transaction. Categories:\n"
+        "duplicate_entry|missing_entry|genuine_error|unknown\n"
+        "Reply with id, category, confidence (0-1), one-sentence explanation.\n"
+        f"Items: {json.dumps(payload, separators=(',', ':'))}"
+    )
 
     response_schema = types.Schema(
         type=types.Type.ARRAY,
@@ -141,6 +134,7 @@ Items:
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=response_schema,
+            max_output_tokens=512,
         ),
     )
     verdicts = json.loads(response.text)

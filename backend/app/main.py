@@ -7,6 +7,7 @@ Matching (Triage/Patch), Verify, and Ship land in later phases.
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 import tempfile
 from pathlib import Path
@@ -109,7 +110,9 @@ async def reconcile(
         "rounding_pct_tolerance": rounding_pct_tolerance,
     })
 
-    results, health = run_full_pipeline(ledger_txns, bank_txns, config)
+    # run_full_pipeline is synchronous (Gemini SDK blocks); offload to thread
+    # pool so we don't hold the event loop during the LLM call.
+    results, health = await asyncio.to_thread(run_full_pipeline, ledger_txns, bank_txns, config)
     summary = summarize(results, len(ledger_txns), len(bank_txns))
 
     return {
@@ -137,7 +140,7 @@ async def reconcile_report(
         "rounding_pct_tolerance": rounding_pct_tolerance,
     })
 
-    results, health = run_full_pipeline(ledger_txns, bank_txns, config)
+    results, health = await asyncio.to_thread(run_full_pipeline, ledger_txns, bank_txns, config)
     summary = summarize(results, len(ledger_txns), len(bank_txns))
 
     output_path = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False).name
