@@ -92,65 +92,50 @@ def _gemini_triage(items: list[Transaction]) -> list[MatchResult]:
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     model_name = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 
+    # Minimal payload — only what Gemini needs to classify (fewer tokens = faster)
     payload = [
-        {
-            "id": i,
-            "source": t.source,
-            "date": str(t.date),
-            "description": t.description,
-            "amount": t.amount,
-            "reference": t.reference,
-        }
+        {"id": i, "desc": t.description, "amt": t.amount, "src": t.source}
         for i, t in enumerate(items)
     ]
 
     prompt = (
-        "Classify each unmatched accounting transaction. Categories:\n"
-        "duplicate_entry|missing_entry|genuine_error|unknown\n"
-        "Reply with id, category, confidence (0-1), one-sentence explanation.\n"
-        f"Items: {json.dumps(payload, separators=(',', ':'))}"
+        "You are an accounting reconciliation assistant. "
+        "Classify each unmatched transaction as one of: "
+        "duplicate_entry, missing_entry, genuine_error, unknown. "
+        "Return a JSON array: [{\"id\":0,\"category\":\"...\",\"confidence\":0.9,\"explanation\":\"one sentence\"}]. "
+        f"Transactions: {json.dumps(payload, separators=(',', ':'))}"
     )
 
-    response_schema = types.Schema(
-        type=types.Type.ARRAY,
-        items=types.Schema(
-            type=types.Type.OBJECT,
-            required=["id", "category", "confidence", "explanation"],
-            properties={
-                "id": types.Schema(type=types.Type.INTEGER),
-                "category": types.Schema(
-                    type=types.Type.STRING,
-                    enum=["duplicate_entry", "missing_entry", "genuine_error", "unknown"],
-                ),
-                "confidence": types.Schema(type=types.Type.NUMBER),
-                "explanation": types.Schema(type=types.Type.STRING),
-            },
-        ),
-    )
-
+    # Plain application/json (no response_schema) is significantly faster —
+    # schema-constrained generation adds ~10-20s of overhead.
     response = client.models.generate_content(
         model=model_name,
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
-            response_schema=response_schema,
-            max_output_tokens=512,
+            max_output_tokens=400,
         ),
     )
-    verdicts = json.loads(response.text)
+
+    # Strip markdown fences if the model wraps the JSON
+    raw = response.text.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+    verdicts = json.loads(raw)
 
     results = []
     for v in verdicts:
         txn = items[v["id"]]
         side_field = "ledger_txn" if txn.source == Source.LEDGER else "bank_txn"
-        category = MatchCategory(v["category"])
+        try:
+            category = MatchCategory(v["category"])
+        except ValueError:
+            category = MatchCategory.GENUINE_ERROR
         results.append(
             MatchResult(
                 **{side_field: txn},
                 status=MatchStatus.NEEDS_REVIEW,
                 category=category,
-                confidence=float(v["confidence"]),
-                explanation=v["explanation"],
+                confidence=float(v.get("confidence", 0.7)),
+                explanation=v.get("explanation", ""),
             )
         )
     return results
@@ -174,16 +159,41 @@ def triage(
     if not still_ambiguous:
         return results
 
-    if os.environ.get("GEMINI_API_KEY"):
+    use_gemini = (
+        os.environ.get("GEMINI_API_KEY")
+        and os.environ.get("SKIP_GEMINI", "false").lower() not in ("1", "true", "yes")
+    )
+
+    if use_gemini:
+        import logging
+        import queue
+        import threading
+        _log = logging.getLogger(__name__)
+        GEMINI_TIMEOUT = int(os.environ.get("GEMINI_TIMEOUT_SECS", "12"))
+
+        result_q: queue.Queue = queue.Queue()
+
+        def _run():
+            try:
+                result_q.put(("ok", _gemini_triage(still_ambiguous)))
+            except Exception as exc:
+                result_q.put(("err", exc))
+
+        # daemon=True — thread is abandoned (not joined) if we time out,
+        # so we never block waiting for a slow Gemini network call to finish.
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
         try:
-            results += _gemini_triage(still_ambiguous)
-        except Exception as exc:
-            # Gemini call failed (quota, model name, network) — fall back to heuristic
-            import logging
-            logging.getLogger(__name__).warning(
-                "Gemini triage failed (%s: %s); falling back to heuristic classifier.",
-                type(exc).__name__, exc,
-            )
+            status, value = result_q.get(timeout=GEMINI_TIMEOUT)
+            if status == "ok":
+                results += value
+            else:
+                import logging as _logging
+                _logging.getLogger(__name__).warning("Gemini triage failed (%s); using heuristic.", value)
+                results += [_heuristic_triage(t) for t in still_ambiguous]
+        except queue.Empty:
+            import logging as _logging
+            _logging.getLogger(__name__).warning("Gemini triage timed out; using heuristic.")
             results += [_heuristic_triage(t) for t in still_ambiguous]
     else:
         results += [_heuristic_triage(t) for t in still_ambiguous]
