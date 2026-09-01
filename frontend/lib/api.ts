@@ -1,7 +1,7 @@
 import { ReconcileResponse } from "./types";
 
 // Point this at your running FastAPI backend (see backend/README.md).
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "https://ledgerwright.onrender.com";
 
 export async function reconcile(ledgerFile: File, bankFile: File): Promise<ReconcileResponse> {
   const form = new FormData();
