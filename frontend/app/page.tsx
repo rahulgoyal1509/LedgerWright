@@ -4,25 +4,28 @@ import { useState } from "react";
 import UploadForm from "@/components/UploadForm";
 import SummaryCards from "@/components/SummaryCards";
 import { AutoMatchedTable, FlaggedTable } from "@/components/ResultsTable";
-import { reconcile } from "@/lib/api";
+import { reconcile, API_BASE } from "@/lib/api";
 import { ReconcileResponse } from "@/lib/types";
 
 export default function DashboardPage() {
   const [data, setData] = useState<ReconcileResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [waking, setWaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"auto" | "flagged">("flagged");
 
   async function handleReconcile(ledgerFile: File, bankFile: File) {
     setLoading(true);
+    setWaking(false);
     setError(null);
     try {
-      const result = await reconcile(ledgerFile, bankFile);
+      const result = await reconcile(ledgerFile, bankFile, () => setWaking(true));
       setData(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
+      setWaking(false);
     }
   }
 
@@ -40,12 +43,20 @@ export default function DashboardPage() {
 
       <UploadForm onReconcile={handleReconcile} loading={loading} />
 
-      {error && (
-        <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          {error} — is the backend running at{" "}
-          <code>NEXT_PUBLIC_API_BASE</code> (default <code>http://127.0.0.1:8000</code>)?
+      {waking && (
+        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 flex items-center gap-2">
+          <span className="animate-spin">⏳</span>
+          Waking up the server — Render free tier sleeps after inactivity. This takes ~30s, please wait…
         </div>
       )}
+
+      {error && (
+        <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {error}
+          <div className="mt-1 text-rose-500 text-xs">Backend URL: <code>{API_BASE}</code></div>
+        </div>
+      )}
+
 
       {data && (
         <div className="mt-8 space-y-6">
