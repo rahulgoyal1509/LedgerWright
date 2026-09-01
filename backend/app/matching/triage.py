@@ -90,7 +90,7 @@ def _gemini_triage(items: list[Transaction]) -> list[MatchResult]:
     from google.genai import types
 
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-    model_name = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
+    model_name = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
 
     payload = [
         {
