@@ -7,10 +7,13 @@ openpyxl==3.1.5
 pdfplumber==0.11.4
 rapidfuzz==3.9.7
 python-dateutil==2.9.0
-# Optional, only needed for the OCR fallback on scanned PDF statements:
+python-dotenv==1.0.1
+google-genai==1.2.0
+
+# Optional, only needed for the OCR fallback on scanned PDF statements.
+# Left commented out deliberately: Render's free tier doesn't ship the
+# tesseract/poppler system binaries this needs, so it's not enabled on
+# the deployed demo (digital PDF/CSV/Excel all still work). Built and
+# tested locally — see TESTING.md.
 # pytesseract==0.3.13
 # pdf2image==1.17.0
-
-# Optional, only needed for real LLM triage — without it, triage.py falls
-# back to a deterministic heuristic so the pipeline still runs end-to-end:
-# google-generativeai==0.8.3
