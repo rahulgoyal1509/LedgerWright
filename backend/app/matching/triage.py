@@ -90,7 +90,7 @@ def _gemini_triage(items: list[Transaction]) -> list[MatchResult]:
     from google.genai import types
 
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-    model_name = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+    model_name = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 
     payload = [
         {
@@ -181,7 +181,16 @@ def triage(
         return results
 
     if os.environ.get("GEMINI_API_KEY"):
-        results += _gemini_triage(still_ambiguous)
+        try:
+            results += _gemini_triage(still_ambiguous)
+        except Exception as exc:
+            # Gemini call failed (quota, model name, network) — fall back to heuristic
+            import logging
+            logging.getLogger(__name__).warning(
+                "Gemini triage failed (%s: %s); falling back to heuristic classifier.",
+                type(exc).__name__, exc,
+            )
+            results += [_heuristic_triage(t) for t in still_ambiguous]
     else:
         results += [_heuristic_triage(t) for t in still_ambiguous]
 

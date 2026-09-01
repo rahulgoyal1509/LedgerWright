@@ -8,7 +8,7 @@ pdfplumber==0.11.4
 rapidfuzz==3.9.7
 python-dateutil==2.9.0
 python-dotenv==1.0.1
-google-genai==1.2.0
+google-genai>=1.16.0
 
 # Optional, only needed for the OCR fallback on scanned PDF statements.
 # Left commented out deliberately: Render's free tier doesn't ship the
