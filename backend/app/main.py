@@ -11,9 +11,10 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, HTTPException
+from fastapi import FastAPI, UploadFile, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.config import get_matching_config
 from app.ingestion.csv_parser import parse_csv
 from app.ingestion.excel_parser import parse_excel
 from app.ingestion.pdf_parser import parse_pdf
@@ -79,16 +80,32 @@ async def ingest(source: Source, file: UploadFile) -> dict:
 
 
 @app.post("/reconcile")
-async def reconcile(ledger_file: UploadFile, bank_file: UploadFile) -> dict:
+async def reconcile(
+    ledger_file: UploadFile,
+    bank_file: UploadFile,
+    max_timing_lag_days: int | None = Form(None, description="Override: max days between ledger entry and bank clearing to still count as a timing-lag auto-match."),
+    rounding_abs_tolerance: float | None = Form(None, description="Override: flat ₹ tolerance for a rounding-difference auto-match."),
+    rounding_pct_tolerance: float | None = Form(None, description="Override: % of transaction amount tolerance for a rounding-difference auto-match."),
+) -> dict:
     """
     Full pipeline: Scan -> Prematch -> Triage -> Verify -> completeness audit.
     Returns every matched pair, every flagged item, and a health report
     confirming every transaction was accounted for and balances reconcile.
+
+    Matching thresholds default to whatever's set in .env, but can be
+    overridden per-request with the three optional form fields above —
+    handy for tuning how strict/lenient auto-matching is without a restart.
     """
     ledger_txns = await _parse_and_normalize(Source.LEDGER, ledger_file)
     bank_txns = await _parse_and_normalize(Source.BANK, bank_file)
 
-    results, health = run_full_pipeline(ledger_txns, bank_txns)
+    config = get_matching_config({
+        "max_timing_lag_days": max_timing_lag_days,
+        "rounding_abs_tolerance": rounding_abs_tolerance,
+        "rounding_pct_tolerance": rounding_pct_tolerance,
+    })
+
+    results, health = run_full_pipeline(ledger_txns, bank_txns, config)
     summary = summarize(results, len(ledger_txns), len(bank_txns))
 
     return {
@@ -99,12 +116,24 @@ async def reconcile(ledger_file: UploadFile, bank_file: UploadFile) -> dict:
 
 
 @app.post("/reconcile/report")
-async def reconcile_report(ledger_file: UploadFile, bank_file: UploadFile) -> FileResponse:
+async def reconcile_report(
+    ledger_file: UploadFile,
+    bank_file: UploadFile,
+    max_timing_lag_days: int | None = Form(None),
+    rounding_abs_tolerance: float | None = Form(None),
+    rounding_pct_tolerance: float | None = Form(None),
+) -> FileResponse:
     """SHIP stage: same pipeline as /reconcile, but returns a downloadable .xlsx report."""
     ledger_txns = await _parse_and_normalize(Source.LEDGER, ledger_file)
     bank_txns = await _parse_and_normalize(Source.BANK, bank_file)
 
-    results, health = run_full_pipeline(ledger_txns, bank_txns)
+    config = get_matching_config({
+        "max_timing_lag_days": max_timing_lag_days,
+        "rounding_abs_tolerance": rounding_abs_tolerance,
+        "rounding_pct_tolerance": rounding_pct_tolerance,
+    })
+
+    results, health = run_full_pipeline(ledger_txns, bank_txns, config)
     summary = summarize(results, len(ledger_txns), len(bank_txns))
 
     output_path = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False).name

@@ -34,15 +34,21 @@ def normalize_dataframe(df: pd.DataFrame, source: Source) -> list[Transaction]:
     id_col = _find_id_column(df)
     prefix = "B" if source == Source.BANK else "L"
 
-    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+    raw_dates = df["date"].astype(str).str.strip()
+    iso_parsed = pd.to_datetime(raw_dates, format="%Y-%m-%d", errors="coerce")
+    remaining_mask = iso_parsed.isna()
+    dayfirst_parsed = pd.to_datetime(
+        raw_dates[remaining_mask], errors="coerce", dayfirst=True
+    )
+    iso_parsed.loc[remaining_mask] = dayfirst_parsed
+    df["date"] = iso_parsed.dt.date
+
     df["amount"] = pd.to_numeric(df["amount"], errors="coerce").abs()
     df["description"] = df["description"].astype(str).str.strip()
     df["reference"] = df["reference"].fillna("").astype(str).str.strip()
 
     bad_rows = df["date"].isna() | df["amount"].isna()
     if bad_rows.any():
-        # In production these would go to an ingestion-error report rather
-        # than being silently dropped. For the hackathon scaffold: drop + warn.
         df = df[~bad_rows]
 
     transactions: list[Transaction] = []

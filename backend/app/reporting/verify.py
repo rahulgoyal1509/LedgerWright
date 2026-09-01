@@ -17,32 +17,31 @@ Two checks, both required before any result is allowed to Ship as "resolved":
    application or an audit.
 """
 
-from __future__ import annotations
-
+from app.config import MatchingConfig, get_matching_config
 from app.schemas import MatchCategory, MatchResult, MatchStatus, Transaction
 
-_ROUNDING_ABS_TOLERANCE = 1.0
-_ROUNDING_PCT_TOLERANCE = 0.005
 
-
-def _expected_tolerance(category: MatchCategory, base_amount: float) -> float | None:
+def _expected_tolerance(category: MatchCategory, base_amount: float, config: MatchingConfig) -> float | None:
     """Max amount-diff (₹) this category is allowed to have. None = not an auto-match category."""
     if category in (MatchCategory.EXACT, MatchCategory.TIMING_LAG):
         return 0.0
     if category == MatchCategory.ROUNDING:
-        return max(_ROUNDING_ABS_TOLERANCE, base_amount * _ROUNDING_PCT_TOLERANCE)
+        return max(config.rounding_abs_tolerance, base_amount * config.rounding_pct_tolerance)
     return None
 
 
-def verify_balances(results: list[MatchResult]) -> tuple[list[MatchResult], int]:
+def verify_balances(
+    results: list[MatchResult], config: MatchingConfig | None = None
+) -> tuple[list[MatchResult], int]:
     """Re-check every AUTO_MATCHED pair; downgrade any that don't actually verify."""
+    config = config or get_matching_config()
     verified: list[MatchResult] = []
     downgraded = 0
 
     for r in results:
         if r.status == MatchStatus.AUTO_MATCHED and r.ledger_txn and r.bank_txn:
             diff = round(abs(r.ledger_txn.amount - r.bank_txn.amount), 2)
-            tolerance = _expected_tolerance(r.category, max(r.ledger_txn.amount, r.bank_txn.amount))
+            tolerance = _expected_tolerance(r.category, max(r.ledger_txn.amount, r.bank_txn.amount), config)
             if tolerance is not None and diff > tolerance:
                 downgraded += 1
                 verified.append(
@@ -62,7 +61,6 @@ def verify_balances(results: list[MatchResult]) -> tuple[list[MatchResult], int]
         verified.append(r)
 
     return verified, downgraded
-
 
 def completeness_audit(
     results: list[MatchResult], ledger: list[Transaction], bank: list[Transaction]
