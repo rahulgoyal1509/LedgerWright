@@ -5,34 +5,44 @@ const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "https://ledgerwright.onren
 
 /**
  * Render free tier spins down after ~15 min of inactivity.
- * First request can take 30-60s to wake up. We ping /health
- * repeatedly until it responds before sending the real payload.
+ * We ping /health to wake it up before sending the heavy multipart request.
+ * Uses no-cors mode so the browser doesn't block the preflight on a GET.
  */
-async function wakeServer(
-  onWaking?: () => void,
-  timeoutMs = 60_000,
-  intervalMs = 3_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let notified = false;
-
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`${API_BASE}/health`, { method: "GET" });
-      if (res.ok) return; // server is up
-    } catch {
-      // still sleeping — keep trying
-    }
-    if (!notified) {
-      onWaking?.();
-      notified = true;
-    }
-    await new Promise((r) => setTimeout(r, intervalMs));
+async function wakeServer(onWaking?: () => void): Promise<void> {
+  // Try a quick health check — if it responds fast, server is already up
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 4000);
+    const res = await fetch(`${API_BASE}/health`, {
+      method: "GET",
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    if (res.ok) return; // already up, no wait needed
+  } catch {
+    // Server sleeping — notify user and wait
   }
-  throw new Error(
-    `Backend at ${API_BASE} did not respond within ${timeoutMs / 1000}s. ` +
-    `It may still be starting up — please try again in a moment.`
-  );
+
+  onWaking?.();
+
+  // Poll /health every 3s until it responds (up to 90s)
+  const deadline = Date.now() + 90_000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 3000));
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 5000);
+      const res = await fetch(`${API_BASE}/health`, {
+        method: "GET",
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+      if (res.ok) return;
+    } catch {
+      // still sleeping
+    }
+  }
+  // Don't throw — just proceed and let the main request fail naturally
 }
 
 export async function reconcile(
@@ -40,28 +50,43 @@ export async function reconcile(
   bankFile: File,
   onWaking?: () => void
 ): Promise<ReconcileResponse> {
-  // Wake the server first (no-op if already running)
   await wakeServer(onWaking);
 
   const form = new FormData();
   form.append("ledger_file", ledgerFile);
   form.append("bank_file", bankFile);
 
-  const res = await fetch(`${API_BASE}/reconcile`, {
-    method: "POST",
-    body: form,
-  });
+  // Give the actual reconcile request 3 minutes — the pipeline can take a while
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 180_000);
 
-  if (!res.ok) {
-    const detail = await res.text();
-    throw new Error(`Reconcile failed (${res.status}): ${detail}`);
+  try {
+    const res = await fetch(`${API_BASE}/reconcile`, {
+      method: "POST",
+      body: form,
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(`Reconcile failed (${res.status}): ${detail}`);
+    }
+
+    return res.json();
+  } catch (err: unknown) {
+    clearTimeout(timer);
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(
+        "Request timed out after 3 minutes. The server may be overloaded — please try again."
+      );
+    }
+    throw err;
   }
-
-  return res.json();
 }
 
 export function reportDownloadUrl(): string {
   return `${API_BASE}/reconcile/report`;
 }
 
-export { API_BASE };
+export { API_BASE };

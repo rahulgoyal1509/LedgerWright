@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import UploadForm from "@/components/UploadForm";
 import SummaryCards from "@/components/SummaryCards";
 import { AutoMatchedTable, FlaggedTable } from "@/components/ResultsTable";
@@ -11,8 +11,20 @@ export default function DashboardPage() {
   const [data, setData] = useState<ReconcileResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [waking, setWaking] = useState(false);
+  const [wakingSecs, setWakingSecs] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"auto" | "flagged">("flagged");
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (waking) {
+      setWakingSecs(0);
+      timerRef.current = setInterval(() => setWakingSecs((s) => s + 1), 1000);
+    } else {
+      if (timerRef.current) clearInterval(timerRef.current);
+    }
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [waking]);
 
   async function handleReconcile(ledgerFile: File, bankFile: File) {
     setLoading(true);
@@ -44,9 +56,17 @@ export default function DashboardPage() {
       <UploadForm onReconcile={handleReconcile} loading={loading} />
 
       {waking && (
-        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 flex items-center gap-2">
-          <span className="animate-spin">⏳</span>
-          Waking up the server — Render free tier sleeps after inactivity. This takes ~30s, please wait…
+        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+          <div className="flex items-center gap-2 font-medium">
+            <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+            </svg>
+            Waking up server… {wakingSecs}s
+          </div>
+          <div className="mt-1 text-amber-600 text-xs">
+            Render free tier sleeps after 15 min of inactivity. Takes up to 60s to wake — please hold on.
+          </div>
         </div>
       )}
 
